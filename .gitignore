@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 output/
 *.egg-info/
+projects/wind_spinner/core_ball_norm.stl
