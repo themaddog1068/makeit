@@ -24,6 +24,9 @@ CORE_NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 BBL_NS  = "http://schemas.bambulab.com/package/2021"
 PROD_NS = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
 
+# Saved Anycubic Kobra 3 V2 4-filament profile (printer + filament settings)
+DEFAULT_CONFIG = Path(__file__).parent / "reference" / "anycubic_kobra3_4color.config"
+
 
 def mesh_to_xml(mesh: trimesh.Trimesh, obj_id: int, uuid_suffix: str) -> str:
     """Serialize one mesh as a standalone <object> with <mesh>."""
@@ -47,9 +50,13 @@ def mesh_to_xml(mesh: trimesh.Trimesh, obj_id: int, uuid_suffix: str) -> str:
     return "\n".join(lines)
 
 
-def build(output_path: Path, ref_dir: Path, parts: list[dict]):
+def build(output_path: Path, parts: list[dict], config_path: Path = DEFAULT_CONFIG,
+          orient_rotate: bool = False):
     """
     parts: list of {name, slot (1-based extruder), mesh (trimesh), color (#hex)}
+    config_path: project_settings.config (printer/filament profile) to embed.
+    orient_rotate: if True, rotate +90° about X (for sources that stack layers
+                   along +Y). AI/OpenSCAD models are already Z-up → leave False.
     """
     tmp = output_path.parent / (output_path.stem + "_build")
     if tmp.exists():
@@ -60,11 +67,12 @@ def build(output_path: Path, ref_dir: Path, parts: list[dict]):
     (tmp / "_rels").mkdir(parents=True)
 
     # ── Orient for printing: layer axis (Y) → build axis (Z) ────────────
-    # Source meshes stack colors along +Y. Rotate +90° about X so the badge
-    # lies flat on the bed (black base down, colors building up in +Z).
-    rot = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
-    for p in parts:
-        p["mesh"].apply_transform(rot)
+    # Some sources stack colors along +Y. Rotate +90° about X so the model
+    # lies flat on the bed (base down, colors building up in +Z).
+    if orient_rotate:
+        rot = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
+        for p in parts:
+            p["mesh"].apply_transform(rot)
 
     # ── Center in XY, rest flat on the bed (min Z = 0) ──────────────────
     all_v = np.vstack([p["mesh"].vertices for p in parts])
@@ -156,8 +164,7 @@ def build(output_path: Path, ref_dir: Path, parts: list[dict]):
     (tmp / "Metadata" / "model_settings.config").write_text(model_settings)
 
     # ── project_settings.config: reuse reference profile, set our colors ─
-    ref_cfg = ref_dir / "Metadata" / "project_settings.config"
-    cfg = json.loads(ref_cfg.read_text())
+    cfg = json.loads(Path(config_path).read_text())
     colors = [p["color"] for p in parts]
     n = len(parts)
     cfg["filament_colour"] = colors
@@ -233,9 +240,11 @@ def build(output_path: Path, ref_dir: Path, parts: list[dict]):
 
 
 if __name__ == "__main__":
-    out  = Path(sys.argv[1])
-    ref  = Path(sys.argv[2])
-    spec = sys.argv[3:]
+    # Usage: build_orca_3mf.py <output.3mf> name:slot:file.stl[:#hex] [...] [--rotate]
+    args = [a for a in sys.argv[1:] if a != "--rotate"]
+    rotate = "--rotate" in sys.argv
+    out  = Path(args[0])
+    spec = args[1:]
     parts = []
     # default color cycle if not given: name:slot:file[:#hex]
     DEFAULT_COLORS = ["#000000", "#FFFFFF", "#1AB82E", "#FFDC14"]
@@ -245,5 +254,5 @@ if __name__ == "__main__":
         color = bits[3] if len(bits) > 3 else DEFAULT_COLORS[i % len(DEFAULT_COLORS)]
         mesh = trimesh.load(fpath, force="mesh")
         parts.append({"name": name, "slot": slot, "mesh": mesh, "color": color})
-    result = build(out, ref, parts)
+    result = build(out, parts, orient_rotate=rotate)
     print(f"Built {result}  ({result.stat().st_size//1024} KB)")

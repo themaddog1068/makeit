@@ -6,6 +6,7 @@ Supports starting from an uploaded STL as a base.
 """
 
 import os
+import re
 import sys
 import json
 import subprocess
@@ -15,6 +16,8 @@ from dotenv import load_dotenv
 import anthropic
 import trimesh
 import numpy as np
+
+from build_orca_3mf import build as orca_build
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -30,6 +33,10 @@ Rules:
 - Include a comment on the very first line declaring parts:
   // PARTS: base, accent, detail, highlight  (up to 4 names, matching ACE slots 1-4)
 - Each part module must be self-contained and renderable on its own.
+- Do NOT add any top-level module calls (e.g. `base();`) at the end of the file.
+  Define modules only — the pipeline invokes each part module separately.
+- Parts must not overlap in space; design them as distinct color regions that
+  stack or sit side by side, each printable in one filament.
 - Default layer height: 0.2mm. Nozzle: 0.4mm. Bed: 420x420mm max.
 - All dimensions in millimeters. Use $fn=64 for smooth curves.
 - When a base STL is provided via import(), keep it intact and only add/subtract geometry.
@@ -41,6 +48,9 @@ COLOR_MAP = [
     [0.10, 0.78, 0.20],  # slot 3 — green
     [0.95, 0.85, 0.10],  # slot 4 — yellow
 ]
+
+# Hex equivalents for ACE slot assignment in the 3MF filament profile
+COLOR_HEX = ["#D92626", "#2659F2", "#1AC733", "#F2D91A"]
 
 PREVIEW_CAMERA = "0,0,0,55,0,25,200"
 PREVIEW_SIZE   = "900,600"
@@ -80,9 +90,29 @@ def analyze_stl(stl_path: Path) -> dict:
     }
 
 
+def strip_toplevel_calls(scad_code: str) -> str:
+    """Remove top-level module invocations so we can render one part in isolation.
+
+    The model definitions are kept; any bare `name();` call at column 0 (i.e. not
+    indented inside a module body) is dropped. Without this, leftover calls like
+    `base(); accent();` cause every part render to include the whole model.
+    """
+    out = []
+    for line in scad_code.splitlines():
+        stripped = line.strip()
+        # A top-level call is unindented and looks like `identifier(...);`
+        is_call = (
+            line[:1] not in (" ", "\t")
+            and re.match(r"^[A-Za-z_]\w*\s*\([^;{]*\)\s*;\s*$", stripped) is not None
+        )
+        if not is_call:
+            out.append(line)
+    return "\n".join(out)
+
+
 def render_part(scad_code: str, module_name: str, output_stl: Path, extra_files: list[Path] = None) -> bool:
     """Render a single module to STL. Copies any extra files (e.g. base STL) alongside."""
-    wrapper = scad_code + f"\n\n{module_name}();\n"
+    wrapper = strip_toplevel_calls(scad_code) + f"\n\n{module_name}();\n"
     with tempfile.NamedTemporaryFile(suffix=".scad", mode="w", delete=False,
                                       dir=output_stl.parent) as f:
         f.write(wrapper)
@@ -104,7 +134,7 @@ def render_preview(scad_code: str, parts: list[str], output_png: Path) -> bool:
         r, g, b = COLOR_MAP[i % len(COLOR_MAP)]
         color_defs += f"  color([{r},{g},{b}]) {part}();\n"
 
-    preview_scad = scad_code + f"\n\n// Preview composite\n{color_defs}\n"
+    preview_scad = strip_toplevel_calls(scad_code) + f"\n\n// Preview composite\n{color_defs}\n"
 
     with tempfile.NamedTemporaryFile(suffix=".scad", mode="w", delete=False,
                                       dir=output_png.parent) as f:
@@ -143,16 +173,39 @@ def extract_parts(scad_code: str) -> list[str]:
     return modules
 
 
+def _repair_watertight(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Best-effort cleanup so the slicer sees a manifold solid."""
+    mesh.merge_vertices()
+    trimesh.repair.fix_normals(mesh)
+    trimesh.repair.fix_winding(mesh)
+    trimesh.repair.fill_holes(mesh)
+    mask = mesh.nondegenerate_faces()
+    mesh.update_faces(mask)
+    mesh.remove_unreferenced_vertices()
+    return mesh
+
+
 def build_3mf(stl_paths: list[Path], part_names: list[str], out_path: Path) -> Path:
-    scene = trimesh.scene.Scene()
+    """Assemble per-part STLs into an Anycubic/Orca-format 3MF.
+
+    Each part becomes a separate sub-object on its own ACE slot (1..4), so the
+    slicer keeps them aligned but prints each in its own filament.
+    """
+    parts = []
     for i, (stl, name) in enumerate(zip(stl_paths, part_names)):
         mesh = trimesh.load(str(stl), force="mesh")
         if mesh.is_empty:
             continue
-        rgb = COLOR_MAP[i % len(COLOR_MAP)]
-        mesh.visual.face_colors = [int(c * 255) for c in rgb] + [255]
-        scene.add_geometry(mesh, node_name=name, geom_name=name)
-    scene.export(str(out_path))
+        if not mesh.is_watertight:
+            mesh = _repair_watertight(mesh)
+        parts.append({
+            "name": name,
+            "slot": (i % 4) + 1,                 # ACE slots 1-4
+            "mesh": mesh,
+            "color": COLOR_HEX[i % len(COLOR_HEX)],
+        })
+    # AI/OpenSCAD output is already Z-up → no print-orientation rotation needed.
+    orca_build(out_path, parts, orient_rotate=False)
     return out_path
 
 

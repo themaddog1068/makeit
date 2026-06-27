@@ -86,12 +86,26 @@ User description
        │
        ├─► OpenSCAD + xvfb ─► preview.png (colour composite render)
        │
-       └─► trimesh ─► combined .3mf with per-part color metadata
-                         │
+       └─► build_orca_3mf.py ─► Anycubic/Orca-format .3mf
+                         │       (one <part> per ACE slot, watertight-repaired)
                          └─► saved to NAS /3d_models/<job>/
 ```
 
-**Multi-color:** Claude generates one `module` per ACE filament slot. OpenSCAD renders each separately to its own STL. The 3MF bundles all parts — Anycubic Slicer Next maps each part to an ACE slot automatically.
+**Multi-color:** Claude generates one `module` per ACE filament slot. OpenSCAD
+renders each separately to its own STL. `build_orca_3mf.py` then assembles them
+into a Bambu/Orca-format 3MF — each part is a separate sub-object assigned to an
+ACE slot (1-4), bundled with the Anycubic Kobra 3 V2 4-filament profile from
+`reference/anycubic_kobra3_4color.config`. This is the format Anycubic Slicer
+Next expects, so parts stay aligned but slice as distinct colors (they do **not**
+get merged). Each part is watertight-repaired before export.
+
+**Standalone 3MF builder:** `build_orca_3mf.py` can also be run directly on any
+set of STLs:
+```bash
+venv/bin/python build_orca_3mf.py out.3mf \
+    base:1:base.stl:#000000 top:2:top.stl:#FFFFFF [--rotate]
+# spec = name:slot:file[:#hex]   --rotate if layers stack along +Y
+```
 
 **Base STL workflow:** Upload an existing STL → trimesh extracts bounding box + dimensions → Claude generates OpenSCAD that `import()`s the original and adds/subtracts geometry → re-rendered to new STL + 3MF.
 
