@@ -1,0 +1,13 @@
+[Unit]
+Description=3D Model Builder Web UI
+After=network.target
+
+[Service]
+User=themaddog1068
+WorkingDirectory=/home/themaddog1068/3d-builder
+ExecStart=/home/themaddog1068/3d-builder/venv/bin/python app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

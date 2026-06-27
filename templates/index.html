@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D Model Builder — Anycubic Kobra 3 Max</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: #111; color: #eee; padding: 2rem; max-width: 1100px; margin: 0 auto; }
+h1 { font-size: 1.4rem; color: #7dd3fc; }
+.sub { color: #666; font-size: 0.82rem; margin-bottom: 2rem; }
+
+.layout { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+@media (max-width: 700px) { .layout { grid-template-columns: 1fr; } }
+
+.panel { background: #1a1a2e; border-radius: 10px; padding: 1.25rem; }
+.panel h2 { font-size: 0.9rem; color: #94a3b8; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 1rem; }
+
+textarea {
+  width: 100%; min-height: 110px; background: #0f0f1a; color: #cdd6f4;
+  border: 1px solid #334; border-radius: 6px; padding: 0.75rem;
+  font-size: 0.95rem; resize: vertical;
+}
+
+.upload-area {
+  border: 2px dashed #334; border-radius: 6px; padding: 1rem;
+  text-align: center; color: #666; font-size: 0.85rem;
+  cursor: pointer; transition: border-color .2s;
+  margin-top: 0.75rem;
+}
+.upload-area:hover, .upload-area.dragover { border-color: #7dd3fc; color: #7dd3fc; }
+.upload-area input { display: none; }
+#filename { margin-top: 0.4rem; color: #a6e3a1; font-size: 0.82rem; }
+
+button {
+  margin-top: 1rem; width: 100%; padding: 0.8rem;
+  background: #7dd3fc; color: #111; border: none; border-radius: 8px;
+  font-size: 1rem; font-weight: 700; cursor: pointer; transition: background .2s;
+}
+button:disabled { background: #2a2a3a; color: #555; cursor: not-allowed; }
+button:hover:not(:disabled) { background: #bae6fd; }
+
+#result { margin-top: 1.5rem; }
+
+.preview-box { background: #0f0f1a; border-radius: 8px; overflow: hidden; text-align: center; min-height: 200px; display: flex; align-items: center; justify-content: center; color: #444; }
+.preview-box img { width: 100%; border-radius: 8px; display: block; }
+
+.downloads { margin-top: 1rem; }
+.dl-btn {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  margin: 0.3rem 0.4rem 0 0; padding: 0.4rem 0.9rem;
+  background: #1e1e3a; border-radius: 6px; color: #cba6f7;
+  text-decoration: none; font-size: 0.85rem; border: 1px solid #334;
+}
+.dl-btn:hover { background: #2a2a4a; }
+
+.parts-tag {
+  display: inline-block; padding: 0.2rem 0.6rem;
+  background: #1e3a1e; border-radius: 4px; color: #a6e3a1;
+  font-size: 0.78rem; margin: 0.2rem 0.3rem 0 0;
+}
+
+.status-line { font-size: 0.85rem; color: #94a3b8; margin-top: 0.5rem; }
+.err { color: #f38ba8; }
+
+/* Jobs list */
+#jobs { margin-top: 2.5rem; }
+#jobs h2 { font-size: 0.9rem; color: #94a3b8; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 0.75rem; }
+.job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+.job-card { background: #1a1a2e; border-radius: 8px; overflow: hidden; cursor: pointer; border: 1px solid #223; transition: border-color .2s; }
+.job-card:hover { border-color: #7dd3fc; }
+.job-thumb { background: #0f0f1a; aspect-ratio: 3/2; overflow: hidden; display: flex; align-items: center; justify-content: center; color: #333; font-size: 2rem; }
+.job-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.job-info { padding: 0.5rem 0.75rem; }
+.job-info .name { font-size: 0.75rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.job-info .files { font-size: 0.7rem; color: #555; margin-top: 0.2rem; }
+
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #334;
+  border-top-color: #7dd3fc; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<h1>3D Model Builder</h1>
+<p class="sub">Anycubic Kobra 3 Max &middot; ACE 4-color &middot; Output to NAS /3d_models</p>
+
+<div class="layout">
+  <!-- Left: inputs -->
+  <div class="panel">
+    <h2>New Model</h2>
+    <textarea id="desc" placeholder="Describe your model&#10;e.g. A phone stand with a red base, blue adjustable arm, and white logo plate. 120mm wide, stable base."></textarea>
+
+    <div class="upload-area" id="dropzone" onclick="document.getElementById('fileInput').click()">
+      <input type="file" id="fileInput" accept=".stl,.3mf" onchange="fileChosen(this)">
+      <div>Drop an STL/3MF here to use as a base &mdash; or click to browse</div>
+      <div id="filename"></div>
+    </div>
+
+    <button id="btn" onclick="generate()">Generate Model</button>
+    <div class="status-line" id="status-line"></div>
+  </div>
+
+  <!-- Right: result -->
+  <div class="panel">
+    <h2>Preview</h2>
+    <div class="preview-box" id="preview-box">Render will appear here</div>
+    <div id="result"></div>
+  </div>
+</div>
+
+<!-- Previous jobs -->
+<div id="jobs">
+  <h2>Previous Projects</h2>
+  <div class="job-grid" id="job-grid"></div>
+</div>
+
+<script>
+let chosenFile = null;
+
+// Drag-and-drop
+const dz = document.getElementById('dropzone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f) { chosenFile = f; document.getElementById('filename').textContent = f.name; }
+});
+
+function fileChosen(input) {
+  chosenFile = input.files[0] || null;
+  document.getElementById('filename').textContent = chosenFile ? chosenFile.name : '';
+}
+
+async function generate() {
+  const desc = document.getElementById('desc').value.trim();
+  if (!desc) return;
+
+  const btn = document.getElementById('btn');
+  const statusLine = document.getElementById('status-line');
+  const previewBox = document.getElementById('preview-box');
+  const result = document.getElementById('result');
+
+  btn.disabled = true;
+  previewBox.innerHTML = '<span class="spinner"></span> Generating&hellip;';
+  result.innerHTML = '';
+  statusLine.innerHTML = '<span class="spinner"></span> Asking Claude, rendering parts, building preview&hellip;';
+
+  const form = new FormData();
+  form.append('description', desc);
+  if (chosenFile) form.append('base_file', chosenFile);
+
+  try {
+    const res = await fetch('/generate', { method: 'POST', body: form });
+    const data = await res.json();
+
+    if (data.error) {
+      previewBox.innerHTML = '<span class="err">Error: ' + data.error + '</span>';
+      statusLine.innerHTML = '';
+    } else {
+      // Preview image
+      if (data.preview) {
+        previewBox.innerHTML = '<img src="/preview/' + data.preview + '?t=' + Date.now() + '" alt="preview">';
+      } else {
+        previewBox.innerHTML = 'Preview unavailable';
+      }
+
+      // Parts tags
+      const partsHtml = (data.parts || []).map(p => `<span class="parts-tag">${p}</span>`).join('');
+
+      // Download links
+      const allFiles = [
+        ...(data.stl_files || []).map(f => ({ label: f.split('/').pop(), path: f })),
+        data['3mf'] ? { label: data['3mf'].split('/').pop(), path: data['3mf'] } : null,
+        data['scad'] ? { label: data['scad'].split('/').pop(), path: data['scad'] } : null,
+      ].filter(Boolean);
+
+      const dlHtml = allFiles.map(f =>
+        `<a class="dl-btn" href="/download/${f.path}" download>${f.label}</a>`
+      ).join('');
+
+      result.innerHTML = `
+        <div style="margin-top:0.75rem">${partsHtml}</div>
+        <div class="downloads">${dlHtml}</div>
+        <div style="margin-top:0.6rem;font-size:0.75rem;color:#555">Saved to NAS: 3d_models/${data.job}</div>
+      `;
+      statusLine.innerHTML = '';
+    }
+  } catch(e) {
+    previewBox.innerHTML = '<span class="err">Request failed</span>';
+    statusLine.innerHTML = '';
+  }
+
+  btn.disabled = false;
+  loadJobs();
+}
+
+async function loadJobs() {
+  const res = await fetch('/jobs');
+  const jobs = await res.json();
+  const grid = document.getElementById('job-grid');
+  grid.innerHTML = '';
+  jobs.forEach(j => {
+    const card = document.createElement('div');
+    card.className = 'job-card';
+    const thumb = j.has_preview
+      ? `<img src="/preview/${j.name}/preview.png" loading="lazy" alt="">`
+      : '&#128437;';
+    const stlCount = j.files.filter(f => f.endsWith('.stl')).length;
+    card.innerHTML = `
+      <div class="job-thumb">${thumb}</div>
+      <div class="job-info">
+        <div class="name" title="${j.name}">${j.name}</div>
+        <div class="files">${stlCount} part${stlCount !== 1 ? 's' : ''} &middot; ${j.files.length} files</div>
+      </div>`;
+    // Clicking a card loads its download links in the result panel
+    card.addEventListener('click', () => showJob(j));
+    grid.appendChild(card);
+  });
+}
+
+function showJob(j) {
+  const result = document.getElementById('result');
+  const previewBox = document.getElementById('preview-box');
+  if (j.has_preview) {
+    previewBox.innerHTML = `<img src="/preview/${j.name}/preview.png?t=${Date.now()}" alt="preview">`;
+  }
+  const dlHtml = j.files.filter(f => !f.startsWith('.')).map(f =>
+    `<a class="dl-btn" href="/download/${j.name}/${f}" download>${f}</a>`
+  ).join('');
+  result.innerHTML = `<div class="downloads" style="margin-top:0.75rem">${dlHtml}</div>
+    <div style="margin-top:0.6rem;font-size:0.75rem;color:#555">NAS: 3d_models/${j.name}</div>`;
+}
+
+loadJobs();
+</script>
+</body>
+</html>
